@@ -109,11 +109,10 @@ object Crawler {
 
   def getLinks(content: String): List[String] = {
     Properties.lineSeparator
-    //val aTagRe =  new Regex("""(?s)(?i)<a([^>]+)>([.]+?)</a>""")
     val aTagRe = "(?s)(?i)<a([^>]+)>(.+?)</a>".r
-    val linkRe = "\\s*(?i)href\\s*=\\s*(\\\"([^\"]*\\\")|'[^']*'|([^'\">\\s]+))".r
+    //val linkRe = "\\s*(?i)href\\s*=\\s*(\\\"([^\"]*\\\")|'[^']*'|([^'\">\\s]+))".r
+    val linkRe = """ \s*(?i)href\s*=\s*\"[^\"]*(/|\.html)\" """.r
     val aTags = aTagRe.findAllIn(content)
-    //for (a <- aTags)println(a)
     aTags.map(linkRe.findAllIn(_).mkString.replaceAll("href[\\s]*=", "").replaceAll("\"", "")).toList
   }
   
@@ -128,7 +127,7 @@ object Crawler {
       raw.mkString
     } catch {
       case ex: Exception => {
-        println("2")
+        this.logger.write("ERROR: "+url)
         ""
       }
     }
@@ -141,6 +140,30 @@ object Crawler {
     return false
   }
   
+  def fingerPrint(content: String){
+      val tokens = tokenize(content) 
+      val stopwords = Set("the", "a", "is", "it", "are")
+      val tokens_wo_stopwords = tokens.filter(!stopwords.contains(_))
+
+      val shingles = tokens.sliding(3).toSet // 3-gram of words
+      val hashes = shingles.map(_.hashCode)
+      val features = hashes.map(h => binary(h))
+      val features_it = features.iterator
+
+      val bitcount = 32
+      val table = Array.fill(bitcount)(0)
+      while (features_it.hasNext) {
+        val feature = features_it.next()
+        for (bit <- Range(0, bitcount)) {
+          if (feature(bit) == '1') {
+            table(bit) += 1
+          } else {
+            table(bit) -= 1
+          }
+        }
+      }
+      val fingerprint = table.mkString
+  }
   
   //a bfs crawling strategy
   def crawling(startUrl: String): Unit = {
@@ -169,28 +192,7 @@ object Crawler {
       neighborsWhite.map( urlQueue.enqueue(_) )
       neighborsWhite.map( visited.add(_) )
 
-//      val tokens = tokenize(raw) // or tokenize(content) ?
-//      val stopwords = Set("the", "a", "is", "it", "are")
-//      val tokens_wo_stopwords = tokens.filter(!stopwords.contains(_))
-//
-//      val shingles = tokens.sliding(3).toSet
-//      val hashes = shingles.map(_.hashCode)
-//      val features = hashes.map(h => binary(h))
-//      val features_it = features.iterator
-//
-//      val bitcount = 32
-//      val table = Array.fill(bitcount)(0)
-//      while (features_it.hasNext) {
-//        val feature = features_it.next()
-//        for (bit <- Range(0, bitcount)) {
-//          if (feature(bit) == '1') {
-//            table(bit) += 1
-//          } else {
-//            table(bit) -= 1
-//          }
-//        }
-//      }
-//      val fingerprint = table.mkString
+
 
     }// while (queue)
     
