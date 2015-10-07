@@ -1,6 +1,6 @@
 import java.io.{ File, PrintWriter }
 import java.net.URL
-
+import java.security.MessageDigest
 import scala.collection.mutable
 import scala.io.Source
 import scala.util.Properties
@@ -23,11 +23,11 @@ object Crawler {
   def tokenize(text: String): List[String] = {
     text.split("[ .,;:?!\t\n\r\f]+").toList
   }
-  
+
   def currentPath(curURL: String) = {
     curURL.replaceAll("(?i)([^\\/]+)\\.html", "");
   }
-  
+
   //convert the relative path to absolute path. Using 2 stacks.
   def relative2Absolute(url: String): String = {
     try {
@@ -60,22 +60,22 @@ object Crawler {
       }
     } catch {
       case ex: Exception => {
-        this.logger.write("ERROR: "+url)
+        this.logger.write("ERROR: " + url)
         ""
       }
     }
   } // relative2Absolute()
 
-  def urlProcess(url: String): String = {//  return a valid url
+  def urlProcess(url: String): String = { //  return a valid url
     val reg = "://".r
     if (reg.findAllIn(url).isEmpty) {
       val url_t = currentPath(currentURL) + url
       val c = url_t.replaceAll("\\s+", "")
       //println(c)
-      relative2Absolute(c)// convert to absolute path
+      relative2Absolute(c) // convert to absolute path
     } else {
       //println(url)
-      relative2Absolute(url).replaceAll("\\s+", "")// remove whitespace
+      relative2Absolute(url).replaceAll("\\s+", "") // remove whitespace
     }
   } // urlProcess()
 
@@ -102,7 +102,7 @@ object Crawler {
     }
 
   }
-  
+
   //remove all the tags and some unprintable characters
   def getContent(raw: String): String = {
     raw.replaceAll("<[^>]*>", " ").replaceAll(Properties.lineSeparator, " ").replace("\\t", " ").replaceAll("[\\s]+", " ")
@@ -111,24 +111,22 @@ object Crawler {
   def getLinks(content: String): List[String] = {
     Properties.lineSeparator
     val aTagRe = "(?s)(?i)<a([^>]+)>(.+?)</a>".r
-    //val linkRe = "\\s*(?i)href\\s*=\\s*(\\\"([^\"]*\\\")|'[^']*'|([^'\">\\s]+))".r
-    val linkRe = """ \s*(?i)href\s*=\s*\"[^\"]*(/|\.html)\" """.r
+    //    val linkRe = """ \s*(?i)(href\s*=\s*\"[^\"]*(/|\.html)\")|(href\s*=\s*'[^\"]*(/|\.html)') | (href\s*=\s*[^\"]*(/|\.html)) """.r
+    val linkRe = """ \s*(?i)(href\s*=\s*\"[^\"]*\.html\") """.r
     val aTags = aTagRe.findAllIn(content)
     aTags.map(linkRe.findAllIn(_).mkString.replaceAll("href[\\s]*=", "").replaceAll("\"", "")).toList
   }
-  
-  
+
   //get the whole html document
   def getRaw(url: String): String = {
 
     val url_c = new URL(url);
-    //println(url)
     try {
       val raw = Source.fromURL(url_c, "ISO-8859-1")
       raw.mkString
     } catch {
       case ex: Exception => {
-        this.logger.write("ERROR: "+url)
+        this.logger.write("ERROR: " + url)
         ""
       }
     }
@@ -140,35 +138,40 @@ object Crawler {
     //c.recogEN(text);
     return false
   }
-  
-  def fingerPrint(content: String):Int = {
-      val tokens = tokenize(content) 
-      val shingles = tokens.sliding(3).toSet // 3-gram of words
-      val hashes = shingles.map(_.hashCode).toArray // each shingle --> hashcode of 32bits 
-      var fp:Int = 0
-      val sz = hashes.size
-      for(i <- 0 to 31){
-        if( hashes.map(_&(1<<i)>>i).sum > sz/2.0 ) fp += (1<<i)
-      }
-      return fp
+
+  def MD5(s: String) = {
+    MessageDigest.getInstance("MD5").digest(s.getBytes)
+  }// return MD5 value in a byte array (16 bytes, 128 bits)
+
+  def simHash(content: String): Int = {
+    val tokens = tokenize(content)
+    val shingles = tokens.sliding(3).toSet // 3-gram of words
+    val hashes = shingles.map(_.hashCode).toArray // each shingle --> hashcode of 32bits 
+    var fp: Int = 0
+    val sz = hashes.size
+    for (i <- 0 to 31) {
+      if (hashes.map(h => (h & (1 << i)) >> i).sum > sz / 2.0)
+        fp |= (1 << i)
+    }
+    return fp
   }
-  
+
   //a bfs crawling strategy
   def crawling(startUrl: String): Unit = {
-    val urlQueue = new mutable.Queue[String]; 
+    val urlQueue = new mutable.Queue[String];
     urlQueue.enqueue(startUrl)
     visited.add(startUrl)
     currentURL = ""
     while (urlQueue.nonEmpty) {
       currentURL = urlQueue.dequeue()
       println(currentURL)
-      this.logger.write(currentURL+'\n')
+      this.logger.write(currentURL + '\n')
 
       val raw = getRaw(currentURL)
       val content = getContent(raw)
       val regStu = "(?i)student".r //match regardless of capitality
-      val fp = fingerPrint(content)
-      if(visited_fps.contains(fp))
+      val fp = simHash(content)
+      if (visited_fps.contains(fp)) 
         this.nearDuplicateN += 1
       visited_fps.add(fp)
       studentN += regStu.findAllIn(content).size
@@ -178,21 +181,16 @@ object Crawler {
       val neighborURL = getLinks(raw).map(urlProcess(_)).toSet
 
       //for all the neighboring urls,if in this domain and not visited, put them in the queue
-      val neighborsWhite = neighborURL.filter( 
-                  (url: String) => { (!visited.contains(url)) && this.domainCheck(url) } )
+      val neighborsWhite = neighborURL.filter(
+        (url: String) => { (!visited.contains(url)) && this.domainCheck(url) })
 
-      neighborsWhite.map( urlQueue.enqueue(_) )
-      neighborsWhite.map( visited.add(_) )
+      neighborsWhite.map(urlQueue.enqueue(_))
+      neighborsWhite.map(visited.add(_))
 
+    } // while (queue)
 
-
-    }// while (queue)
-    
     this.urlN = visited.size
   } // crawling()
-
-
-
 
   //just for testing
   def main(args: Array[String]) = {
