@@ -8,6 +8,7 @@ import scala.util.Properties
 object Crawler {
 
   val visited = mutable.HashSet[String]();
+  val visited_fps = mutable.HashSet[Int]();
 
   var urlN = 0;
   var studentN = 0;
@@ -140,29 +141,16 @@ object Crawler {
     return false
   }
   
-  def fingerPrint(content: String){
+  def fingerPrint(content: String):Int = {
       val tokens = tokenize(content) 
-      val stopwords = Set("the", "a", "is", "it", "are")
-      val tokens_wo_stopwords = tokens.filter(!stopwords.contains(_))
-
       val shingles = tokens.sliding(3).toSet // 3-gram of words
-      val hashes = shingles.map(_.hashCode)
-      val features = hashes.map(h => binary(h))
-      val features_it = features.iterator
-
-      val bitcount = 32
-      val table = Array.fill(bitcount)(0)
-      while (features_it.hasNext) {
-        val feature = features_it.next()
-        for (bit <- Range(0, bitcount)) {
-          if (feature(bit) == '1') {
-            table(bit) += 1
-          } else {
-            table(bit) -= 1
-          }
-        }
+      val hashes = shingles.map(_.hashCode).toArray // each shingle --> hashcode of 32bits 
+      var fp:Int = 0
+      val sz = hashes.size
+      for(i <- 0 to 31){
+        if( hashes.map(_&(1<<i)>>i).sum > sz/2.0 ) fp += (1<<i)
       }
-      val fingerprint = table.mkString
+      return fp
   }
   
   //a bfs crawling strategy
@@ -179,6 +167,10 @@ object Crawler {
       val raw = getRaw(currentURL)
       val content = getContent(raw)
       val regStu = "(?i)student".r //match regardless of capitality
+      val fp = fingerPrint(content)
+      if(visited_fps.contains(fp))
+        this.nearDuplicateN += 1
+      visited_fps.add(fp)
       studentN += regStu.findAllIn(content).size
       if (langRec(content)) {
         engPageN += 1
