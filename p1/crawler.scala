@@ -4,12 +4,11 @@ import java.security.MessageDigest
 import scala.collection.mutable
 import scala.io.Source
 import scala.util.Properties
-import scala.util.hashing
 
 object Crawler {
 
   val visited = mutable.HashSet[String]();
-  val visited_fps = mutable.HashSet[String]();
+  val visited_fps = mutable.HashMap[String,String]();
 
   var urlN = 0;
   var studentN = 0;
@@ -176,9 +175,12 @@ object Crawler {
       val content = getContent(raw)
       val regStu = "(?i)student".r //match regardless of capitality
       val fp = simHash(content)
-      if (visited_fps.contains(fp))
+      if (visited_fps.contains(fp)){
         this.nearDuplicateN += 1
-      visited_fps.add(fp)
+        println("found dup:"+visited_fps.get(fp)+", "+currentURL)
+        logger.write("found dup:"+visited_fps.get(fp)+", "+currentURL+'\n')
+        }
+      visited_fps(fp) = currentURL
       studentN += regStu.findAllIn(content).size
       if (langRec(content)) {
         engPageN += 1
