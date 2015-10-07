@@ -4,11 +4,12 @@ import java.security.MessageDigest
 import scala.collection.mutable
 import scala.io.Source
 import scala.util.Properties
+import scala.util.hashing
 
 object Crawler {
 
   val visited = mutable.HashSet[String]();
-  val visited_fps = mutable.HashSet[Int]();
+  val visited_fps = mutable.HashSet[String]();
 
   var urlN = 0;
   var studentN = 0;
@@ -141,20 +142,24 @@ object Crawler {
 
   def MD5(s: String) = {
     MessageDigest.getInstance("MD5").digest(s.getBytes)
-  }// return MD5 value in a byte array (16 bytes, 128 bits)
+  } // return MD5 value in a byte array (16 bytes, 128 bits)
 
-  def simHash(content: String): Int = {
+  def simHash(content: String): String = {
     val tokens = tokenize(content)
-    val shingles = tokens.sliding(3).toSet // 3-gram of words
-    val hashes = shingles.map(_.hashCode).toArray // each shingle --> hashcode of 32bits 
-    var fp: Int = 0
+    val shingles = tokens.sliding(3).toSet.toArray // 3-gram of words
+    val hashes = shingles.map(s => MD5(s.mkString)) // each shingle --> hashcode of 128bits, in a byte array 
+    val fp = Array[Byte](0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    val MASK = 0xF // 1111
     val sz = hashes.size
-    for (i <- 0 to 31) {
-      if (hashes.map(h => (h & (1 << i)) >> i).sum > sz / 2.0)
-        fp |= (1 << i)
+    for (i <- 0 to 127) {
+      val index = i/8
+      val j = i&MASK;
+      if (hashes.map(h => (h(index) & (1 << j)) >> j).sum > sz / 2.0)
+        fp(index) = (fp(index)|(1 << j)).toByte
     }
-    return fp
+    return fp.map( "%3d".format(_).replace(' ','0') ).mkString
   }
+  
 
   //a bfs crawling strategy
   def crawling(startUrl: String): Unit = {
@@ -171,7 +176,7 @@ object Crawler {
       val content = getContent(raw)
       val regStu = "(?i)student".r //match regardless of capitality
       val fp = simHash(content)
-      if (visited_fps.contains(fp)) 
+      if (visited_fps.contains(fp))
         this.nearDuplicateN += 1
       visited_fps.add(fp)
       studentN += regStu.findAllIn(content).size
