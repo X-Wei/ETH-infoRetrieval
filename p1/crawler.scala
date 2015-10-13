@@ -8,7 +8,8 @@ import scala.util.Properties
 object Crawler {
 
   val visited = mutable.HashSet[String]();
-  val visited_fps = mutable.HashMap[String,String]();
+  //val visited_fps = mutable.HashMap[String,String]();
+  val visited_fps = mutable.HashMap[Int, String]();
 
   var urlN = 0;
   var studentN = 0;
@@ -31,7 +32,7 @@ object Crawler {
   //convert the relative path to absolute path. Using 2 stacks.
   def relative2Absolute(url: String): String = {
     try {
-      val reg = "\\.".r
+      val reg = """/\.""".r
       // if there is a dot in path
       if (reg.findAllIn(url).nonEmpty) {
         val directories = url.split("/").toList
@@ -111,10 +112,11 @@ object Crawler {
   def getLinks(content: String): List[String] = {
     Properties.lineSeparator
     val aTagRe = "(?s)(?i)<a([^>]+)>(.+?)</a>".r
-    //    val linkRe = """ \s*(?i)(href\s*=\s*\"[^\"]*(/|\.html)\")|(href\s*=\s*'[^\"]*(/|\.html)') | (href\s*=\s*[^\"]*(/|\.html)) """.r
-    val linkRe = """ \s*(?i)(href\s*=\s*\"[^\"]*\.html\") """.r
+    val linkRe = """(?i)(href\s*=\s*[\"\']?[^\"]*\.html[\'\"]?)""".r
     val aTags = aTagRe.findAllIn(content)
-    aTags.map(linkRe.findAllIn(_).mkString.replaceAll("href[\\s]*=", "").replaceAll("\"", "")).toList
+    aTags.map(linkRe.findAllIn(_).mkString.replaceAll("href[\\s]*=", "")
+      .replaceAll("""[\?|\#].*""", "") // "disregard any anchors (#) or get parameters (?)"
+      .replaceAll("\"", "")).toList
   }
 
   //get the whole html document
@@ -127,7 +129,7 @@ object Crawler {
     } catch {
       case ex: Exception => {
         this.logger.write("ERROR: " + url)
-        ""
+        "" //if exception: return empty string
       }
     }
   } // getRaw()
@@ -143,7 +145,7 @@ object Crawler {
     MessageDigest.getInstance("MD5").digest(s.getBytes)
   } // return MD5 value in a byte array (16 bytes, 128 bits)
 
-  def simHash(content: String): String = {
+  def simHash128(content: String): String = {
     val tokens = tokenize(content)
     val shingles = tokens.sliding(3).toSet.toArray // 3-gram of words
     val hashes = shingles.map(s => MD5(s.mkString)) // each shingle --> hashcode of 128bits, in a byte array 
@@ -151,14 +153,43 @@ object Crawler {
     val MASK = 0xF // 1111
     val sz = hashes.size
     for (i <- 0 to 127) {
-      val index = i/8
-      val j = i&MASK;
+      val index = i / 8
+      val j = i & MASK;
       if (hashes.map(h => (h(index) & (1 << j)) >> j).sum > sz / 2.0)
-        fp(index) = (fp(index)|(1 << j)).toByte
+        fp(index) = (fp(index) | (1 << j)).toByte
     }
-    return fp.map( "%3d".format(_).replace(' ','0') ).mkString
+    return fp.map("%3d".format(_).replace(' ', '0')).mkString
   }
-  
+
+  def simHash32(content: String): Int = {
+    val tokens = tokenize(content)
+    val shingles = tokens.sliding(3).toSet.toArray // 3-gram of words
+    val hashes = shingles.map(_.hashCode).toArray // each shingle --> hashcode of 32bits 
+    var fp: Int = 0
+    val sz = hashes.size
+    for (i <- 0 to 31) {
+      if (hashes.map(h => (h & (1 << i)) >> i).sum > sz / 2.0)
+        fp |= (1 << i)
+    }
+    return fp
+  }
+
+  def isNearDup(hs: Int): Boolean = { //test if a hashcode is a near duplicate
+    for (hash <- visited_fps.keySet) {
+      if (bit_diff(hash, hs) <= 2)
+        return true;
+    }
+    return false
+  }
+
+  def bit_diff(hash: Int, hs: Int) = {
+    var count = 0;
+    for (i <- 0 to 31) {
+      val mask = 1 << i
+      if (((hash ^ hs) & mask) > 0) count += 1;
+    }
+    count
+  }
 
   //a bfs crawling strategy
   def crawling(startUrl: String): Unit = {
@@ -168,35 +199,39 @@ object Crawler {
     currentURL = ""
     while (urlQueue.nonEmpty) {
       currentURL = urlQueue.dequeue()
-      println(currentURL)
-      this.logger.write(currentURL + '\n')
 
       val raw = getRaw(currentURL)
       val content = getContent(raw)
-      val regStu = "(?i)student".r //match regardless of capitality
-      val fp = simHash(content)
-      if (visited_fps.contains(fp)){
-        this.nearDuplicateN += 1
-        println("found dup:"+visited_fps.get(fp)+", "+currentURL)
-        logger.write("found dup:"+visited_fps.get(fp)+", "+currentURL+'\n')
+
+      if (content.length() > 0) { //avoid invalid urls // && !raw.contains("redirected")
+        println(currentURL + ", " + content.length())
+        this.logger.write(currentURL + ", " + content.length() + '\n')
+        this.urlN += 1; // only valid urls count
+        val regStu = "(?i)student".r //match regardless of capitality
+        val fp = simHash32(content)
+        if (isNearDup(fp)){//(visited_fps.contains(fp)) {
+          this.nearDuplicateN += 1
+          println("found dup:" + visited_fps.get(fp) + ", " + currentURL + ", " + content.length())
+          logger.write("found dup:" + visited_fps.get(fp) + ", " + currentURL + ", " + content.length() + '\n')
         }
-      visited_fps(fp) = currentURL
-      studentN += regStu.findAllIn(content).size
-      if (langRec(content)) {
-        engPageN += 1
+        visited_fps(fp) = currentURL
+        studentN += regStu.findAllIn(content).size
+        if (langRec(content)) {
+          engPageN += 1
+        }
+        val neighborURL = getLinks(raw).map(urlProcess(_)).toSet
+
+        //for all the neighboring urls,if in this domain and not visited, put them in the queue
+        val neighborsWhite = neighborURL.filter(
+          (url: String) => { (!visited.contains(url)) && this.domainCheck(url) && url.endsWith("html") })
+
+        neighborsWhite.map(urlQueue.enqueue(_))
+        neighborsWhite.map(visited.add(_))
       }
-      val neighborURL = getLinks(raw).map(urlProcess(_)).toSet
-
-      //for all the neighboring urls,if in this domain and not visited, put them in the queue
-      val neighborsWhite = neighborURL.filter(
-        (url: String) => { (!visited.contains(url)) && this.domainCheck(url) })
-
-      neighborsWhite.map(urlQueue.enqueue(_))
-      neighborsWhite.map(visited.add(_))
 
     } // while (queue)
 
-    this.urlN = visited.size
+    //this.urlN = visited.size
   } // crawling()
 
   //just for testing
